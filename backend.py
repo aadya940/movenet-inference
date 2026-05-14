@@ -81,7 +81,7 @@ class ContextBatch:
     batch_index:        int
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self))
+        return json.dumps(asdict(self), default=lambda x: float(x) if hasattr(x, "__float__") else x)
 
     def to_anthropic_messages(self) -> list[dict]:
         """
@@ -353,9 +353,15 @@ async def stream(websocket: WebSocket) -> None:
     await websocket.accept()
     loop = asyncio.get_event_loop()
 
-    # Parse config from first message.
-    config_raw = await websocket.receive_text()
-    config     = json.loads(config_raw)
+    # Parse config from first message — must be text JSON.
+    try:
+        first = await websocket.receive()
+        config_raw = first.get("text") or (first.get("bytes") or b"{}").decode()
+        config = json.loads(config_raw)
+    except Exception as exc:
+        print(f"Failed to parse config: {exc}")
+        await websocket.close(code=1011)
+        return
 
     session = StreamSession(
         model=get_model(),
@@ -396,5 +402,7 @@ async def stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         print(f"Client disconnected — exercise={session.exercise}")
     except Exception as exc:
+        import traceback
         print(f"Session error: {exc}")
+        traceback.print_exc()
         await websocket.close(code=1011)
